@@ -29,7 +29,6 @@ Thumbs.db
 
 # Environment / config
 .env
-.env.*
 *.pem
 *.key
 *.crt

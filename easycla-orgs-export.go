@@ -5,11 +5,13 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"database/sql"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/pem"
 	"fmt"
 	"html"
 	"os"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -58,20 +60,91 @@ func getTextFromXMLNode(n *xmlquery.Node) string {
 	return ""
 }
 
-func parseXML(xmlStr string) (string, string, string, error) {
+func mergeAddr(addr1, addr2, sep string) string {
+	if addr1 == "" {
+		return addr2
+	}
+	if addr2 == "" {
+		return addr1
+	}
+	return addr1 + sep + addr2
+}
+
+func parseXML(xmlStr string, parseEmbedded, dbg bool) (string, string, string, string, error) {
 	doc, err := xmlquery.Parse(strings.NewReader(normalizeSnowflakeXML(xmlStr, true)))
-	// if strings.Contains(xmlStr, "&") {
-	// 	fmt.Printf("NORMALIZED:\n%s\nINTO:\n%s\n", xmlStr, normalizeSnowflakeXML(xmlStr, true))
-	// }
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 
 	corpName := xmlquery.FindOne(doc, "//field[@name='corporation_name']/value")
-	addr1 := xmlquery.FindOne(doc, "//field[@name='corporation_address1']/value")
-	addr2 := xmlquery.FindOne(doc, "//field[@name='corporation_address2']/value")
+	cName := strings.TrimSpace(getTextFromXMLNode(corpName))
 
-	return strings.TrimSpace(getTextFromXMLNode(corpName)), strings.TrimSpace(getTextFromXMLNode(addr1)), strings.TrimSpace(getTextFromXMLNode(addr2)), nil
+	addr1 := xmlquery.FindOne(doc, "//field[@name='address1']/value")
+	addr2 := xmlquery.FindOne(doc, "//field[@name='address2']/value")
+	addr3 := xmlquery.FindOne(doc, "//field[@name='address3']/value")
+
+	caddr1 := xmlquery.FindOne(doc, "//field[@name='corporation_address1']/value")
+	caddr2 := xmlquery.FindOne(doc, "//field[@name='corporation_address2']/value")
+	caddr3 := xmlquery.FindOne(doc, "//field[@name='corporation_address3']/value")
+
+	a1 := strings.TrimSpace(getTextFromXMLNode(addr1))
+	a2 := strings.TrimSpace(getTextFromXMLNode(addr2))
+	a3 := strings.TrimSpace(getTextFromXMLNode(addr3))
+
+	ca1 := strings.TrimSpace(getTextFromXMLNode(caddr1))
+	ca2 := strings.TrimSpace(getTextFromXMLNode(caddr2))
+	ca3 := strings.TrimSpace(getTextFromXMLNode(caddr3))
+
+	ad1 := mergeAddr(ca1, a1, ";;;")
+	ad2 := mergeAddr(ca2, a2, ";;;")
+	ad3 := mergeAddr(ca3, a3, ";;;")
+
+	if parseEmbedded {
+		dataNode := xmlquery.FindOne(doc, "//RecipientAttachment/Attachment/Data")
+		dataB64 := strings.TrimSpace(getTextFromXMLNode(dataNode))
+		if dataB64 != "" {
+			data, err := base64.StdEncoding.DecodeString(dataB64)
+			if err == nil {
+				sData := string(data)
+				eCompany, eAddr1, eAddr2, eAddr3, errEbd := parseXML(sData, false, dbg)
+				if errEbd != nil {
+					fmt.Printf("warning: error parsing embedded XML: '%s'\n", sData)
+				} else {
+					if dbg {
+						fmt.Printf("found embedded data: '%s', '%s', '%s', '%s' --> '%s', '%s', '%s', '%s'\n", cName, ad1, ad2, ad3, eCompany, eAddr1, eAddr2, eAddr2)
+					}
+					if cName == "" && eCompany != "" {
+						cName = eCompany
+						if dbg {
+							fmt.Printf("embedded company update '%s'", cName)
+						}
+					}
+					if ad1 == "" && eAddr1 != "" {
+						ad1 = eAddr1
+						if dbg {
+							fmt.Printf("embedded address1 update '%s'", ad1)
+						}
+					}
+					if ad2 == "" && eAddr2 != "" {
+						ad2 = eAddr2
+						if dbg {
+							fmt.Printf("embedded address2 update '%s'", ad2)
+						}
+					}
+					if ad3 == "" && eAddr3 != "" {
+						ad3 = eAddr3
+						if dbg {
+							fmt.Printf("embedded address3 update '%s'", ad3)
+						}
+					}
+				}
+			} else {
+				fmt.Printf("warning: error parsing embedded XML data '%s'\n", dataB64)
+			}
+		}
+	}
+
+	return cName, ad1, ad2, ad3, nil
 }
 
 type TemplateData struct {
@@ -108,6 +181,7 @@ func main() {
 		startDate = "2000-01-01"
 	}
 	fmt.Printf("Start date: %s\n", startDate)
+	dbg := os.Getenv("DEBUG") != ""
 	stage := os.Getenv("STAGE")
 	if stage == "" {
 		stage = "dev"
@@ -123,7 +197,9 @@ func main() {
 		signatures = fmt.Sprintf("%s_us_east1_dev.cla_%s_signatures", schema, stage)
 		companies = fmt.Sprintf("%s_us_east1_dev.cla_%s_companies", schema, stage)
 	}
-	fmt.Printf("Tables: %s, %s\n", signatures, companies)
+	if dbg {
+		fmt.Printf("Tables: %s, %s\n", signatures, companies)
+	}
 
 	privateKeyPEM := strings.ReplaceAll(os.Getenv("SNOWFLAKE_PRIVATE_KEY"), `\n`, "\n")
 
@@ -173,7 +249,9 @@ func main() {
 	if err != nil {
 		panic(fmt.Errorf("failed to load query.sql: %w", err))
 	}
-	fmt.Printf("Query:\n---\n%s\n---\n", query)
+	if dbg {
+		fmt.Printf("Query:\n---\n%s\n---\n", query)
+	}
 
 	rows, err := db.QueryContext(ctx, query, startDate)
 	if err != nil {
@@ -182,13 +260,15 @@ func main() {
 	defer rows.Close()
 
 	// fn := fmt.Sprintf("export_%s_from_%s.csv", time.Now().Format("20060102150405"), startDate)
-	fn := fmt.Sprintf("export_%s_from_%s.csv", time.Now().Format("2006-01-02"), startDate)
+	fn := fmt.Sprintf("export_%s_%s_from_%s.csv", stage, time.Now().Format("2006-01-02"), startDate)
 	f, _ := os.Create(fn)
 	w := csv.NewWriter(f)
 	defer f.Close()
 
 	_ = w.Write([]string{"Company", "Address"})
 
+	companiesMap := make(map[string]string)
+	dataMap := make(map[string]string)
 	for rows.Next() {
 		var company string
 		var doc string
@@ -197,25 +277,71 @@ func main() {
 			panic(err)
 		}
 
-		xmlCompany, addr1, addr2, xmlErr := parseXML(doc)
+		xmlCompany, addr1, addr2, addr3, xmlErr := parseXML(doc, true, dbg)
 		if xmlErr != nil {
 			fmt.Printf("warning: error %+v parsing XML: '%s'\n", xmlErr, doc)
 		}
-		// fmt.Printf("row: company%s, xmlCompany=%s, addr1=%s, addr2=%s\n", company, xmlCompany, addr1, addr2)
+		// fmt.Printf("row: company%s, xmlCompany=%s, addr1=%s, addr2=%s, addr3=%s\n", company, xmlCompany, addr1, addr2, addr3)
 		finalCompany := strings.TrimSpace(company)
 		if finalCompany == "" {
 			finalCompany = strings.TrimSpace(xmlCompany)
 		}
-		addr := addr1
-		if addr == "" {
-			addr = addr2
-		} else {
-			if addr2 != "" {
-				addr += ", " + addr2
-			}
+		if finalCompany == "" {
+			fmt.Printf("warning: cannot get company for row: company%s, xmlCompany=%s, addr1=%s, addr2=%s, addr3=%s, xml: '%s'\n", company, xmlCompany, addr1, addr2, addr3, doc)
+			continue
 		}
-
-		_ = w.Write([]string{finalCompany, addr})
+		addr := mergeAddr(addr1, addr2, ", ")
+		addr = mergeAddr(addr, addr3, ", ")
+		existingAddr, exists := companiesMap[finalCompany]
+		if exists {
+			if addr == existingAddr {
+				if dbg {
+					fmt.Printf("warning: company '%s' already exists and has the same address\n", finalCompany)
+				}
+				continue
+			}
+			if dbg {
+				fmt.Printf("warning: company '%s' already exists and the new address is different '%s' than previous '%s', merging both\n", finalCompany, addr, existingAddr)
+			}
+			companiesMap[finalCompany] = mergeAddr(existingAddr, addr, ";;;")
+			dataMap[finalCompany] = doc
+			continue
+		}
+		companiesMap[finalCompany] = addr
+		dataMap[finalCompany] = doc
+	}
+	companiesList := make([]string, 0, len(companiesMap))
+	for company := range companiesMap {
+		companiesList = append(companiesList, company)
+	}
+	sort.Strings(companiesList)
+	for _, company := range companiesList {
+		addresses := strings.Split(companiesMap[company], ";;;")
+		if len(addresses) == 1 {
+			if addresses[0] == "" {
+				if dbg {
+					fmt.Printf("No address found for '%s' in XML: '%s'\n", company, dataMap[company])
+				} else {
+					fmt.Printf("No address found for '%s'\n", company)
+				}
+			}
+			_ = w.Write([]string{company, addresses[0]})
+			continue
+		}
+		mp := make(map[string]struct{})
+		for _, addr := range addresses {
+			mp[addr] = struct{}{}
+		}
+		lst := make([]string, 0, len(mp))
+		for ad := range mp {
+			lst = append(lst, ad)
+		}
+		sort.Strings(lst)
+		addrs := strings.Join(lst, "; ")
+		if addrs == "" {
+			fmt.Printf("No address found for '%s'\n", company)
+		}
+		_ = w.Write([]string{company, addrs})
 	}
 	w.Flush()
 	fmt.Printf("Saved %s\n", fn)
