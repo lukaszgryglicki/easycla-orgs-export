@@ -80,6 +80,8 @@ func mergeAddr(addr1, addr2, sep string) string {
 	return addr1 + sep + addr2
 }
 
+// address can be in address1, address2, address3 fields or corporation_address1, corporation_address2, corporation_address3 fields
+// also support looking inside base64 encoded content '//RecipientAttachment/Attachment/Data - using the same fields
 func parseXML(xmlStr string, parseEmbedded, dbg bool) (string, string, string, string, error) {
 	doc, err := xmlquery.Parse(strings.NewReader(normalizeSnowflakeXML(xmlStr, true)))
 	if err != nil {
@@ -199,6 +201,7 @@ func downloadS3PDF(s3Client *s3.Client, bucket, key string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// NOTE: required 'pdftotext' tool installed, tried various PDF parsing libraries but after hours of testing this one works best
 func extractTextLinesFromPDF(pdfBytes []byte) ([]string, error) {
 	cmd := exec.Command("pdftotext", "-layout", "-", "-")
 	cmd.Stdin = bytes.NewReader(pdfBytes)
@@ -226,7 +229,10 @@ func extractTextLinesFromPDF(pdfBytes []byte) ([]string, error) {
 	return lines, nil
 }
 
+// If we hit text line matching this - assume this is address
 var addressRegexp = regexp.MustCompile(`(?i)\d{1,5}\s+[\w\s.,'-]+(?:\n|,)?\s*\w{2,}\s+\d{4,6}`)
+
+// If we hit text line matching this after any line that contains "address" (no case sensitive) - assume this is address
 var addressHinted = regexp.MustCompile(`(?i)(?:address[:\s]*)?\s*(\d{1,5}\s+[\w\s.,'-]+(?:\n|,)?\s*\w{2,}\s+\d{4,6})`)
 
 func extractAddressFromPDF(data []byte) (string, error) {
@@ -343,7 +349,6 @@ func main() {
 	}
 	defer rows.Close()
 
-	// fn := fmt.Sprintf("export_%s_from_%s.csv", time.Now().Format("20060102150405"), startDate)
 	fn := fmt.Sprintf("export_%s_%s_from_%s.csv", stage, time.Now().Format("2006-01-02"), startDate)
 	f, _ := os.Create(fn)
 	w := csv.NewWriter(f)
@@ -434,7 +439,6 @@ func main() {
 		s3FullPath := fmt.Sprintf("s3://%s/%s", s3Bucket, s3Path)
 		// s3://cla-signature-files-prod/contract-group/6c6a70a6-6a54-49eb-8550-6d47e3f902b9/ccla/f0f7536a-f220-451d-a15a-b6bc90e3cdc6/74936cb6-721e-4d01-bf89-347407a9f15c.pdf
 		data, err := downloadS3PDF(s3c, s3Bucket, s3Path)
-		// data, err := downloadS3PDF(s3c, s3Bucket, "contract-group/6c6a70a6-6a54-49eb-8550-6d47e3f902b9/ccla/f0f7536a-f220-451d-a15a-b6bc90e3cdc6/74936cb6-721e-4d01-bf89-347407a9f15c.pdf")
 		if err != nil {
 			fmt.Printf("warning: failed to download PDF from S3 path: '%s': %+v\n", s3FullPath, err)
 			continue
