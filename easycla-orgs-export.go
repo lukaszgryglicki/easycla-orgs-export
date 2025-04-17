@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
@@ -10,15 +11,21 @@ import (
 	"encoding/pem"
 	"fmt"
 	"html"
+	"io"
 	"os"
 	"sort"
 	"strings"
 	"text/template"
 	"time"
 
+	// Snowflake support
 	"github.com/antchfx/xmlquery"
 	"github.com/joho/godotenv"
 	"github.com/snowflakedb/gosnowflake"
+
+	// AWS S3 support
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 func fixBrokenAmpersands(xml string) string {
@@ -171,6 +178,29 @@ func loadQuery(path string, data TemplateData) (string, error) {
 	return sb.String(), nil
 }
 
+func downloadS3PDF(s3Client *s3.Client, bucket, key string) ([]byte, error) {
+	resp, err := s3Client.GetObject(context.TODO(), &s3.GetObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to download from S3: %w", err)
+	}
+	defer resp.Body.Close()
+
+	buf := new(bytes.Buffer)
+	if _, err := io.Copy(buf, resp.Body); err != nil {
+		return nil, fmt.Errorf("failed to read S3 object into buffer: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+func extractAddressFromPDF(data []byte) (string, error) {
+	// XXX
+	return fmt.Sprintf("address %d", len(data)), nil
+}
+
 func main() {
 	_ = godotenv.Load()
 
@@ -218,7 +248,7 @@ func main() {
 		panic("not an RSA private key")
 	}
 
-	cfg := &gosnowflake.Config{
+	scfg := &gosnowflake.Config{
 		Account:       os.Getenv("SNOWFLAKE_ACCOUNT"),
 		User:          os.Getenv("SNOWFLAKE_USERNAME"),
 		Role:          os.Getenv("SNOWFLAKE_ROLE"),
@@ -228,7 +258,7 @@ func main() {
 		PrivateKey:    rsaKey,
 	}
 
-	dsn, err := gosnowflake.DSN(cfg)
+	dsn, err := gosnowflake.DSN(scfg)
 	if err != nil {
 		panic(err)
 	}
@@ -241,6 +271,13 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+
+	// Connect to AWS
+	acfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		panic(err)
+	}
+	s3c := s3.NewFromConfig(acfg)
 
 	// Get normal cases from saved XMLs
 	query, err := loadQuery("query-automatic.sql", TemplateData{
@@ -329,6 +366,8 @@ func main() {
 		panic(err)
 	}
 	defer rows.Close()
+
+	s3Bucket := "cla-signature-files-" + stage
 	for rows.Next() {
 		var company string
 		var signatureID, projectID, companyID string
@@ -337,15 +376,30 @@ func main() {
 			panic(err)
 		}
 
-		fmt.Printf("row: company%s, signature_id=%s, project_id=%s, company_id=%s\n", company, signatureID, projectID, companyID)
+		// fmt.Printf("row: company%s, signature_id=%s, project_id=%s, company_id=%s\n", company, signatureID, projectID, companyID)
+		projectID = strings.ReplaceAll(projectID, `"`, "")
+		companyID = strings.ReplaceAll(companyID, `"`, "")
 		finalCompany := strings.TrimSpace(company)
 		if finalCompany == "" {
 			fmt.Printf("warning: cannot get company for row: company%s, signature_id=%s, project_id=%s, company_id=%s\n", company, signatureID, projectID, companyID)
 			continue
 		}
-		s3Path := fmt.Sprintf("s3://cla-signature-files-%s/contract-group/%s/ccla/%s/%s.pdf", stage, projectID, companyID, signatureID)
-		// XXX:
-		addr := "xyz"
+		s3Path := fmt.Sprintf("contract-group/%s/ccla/%s/%s.pdf", projectID, companyID, signatureID)
+		s3FullPath := fmt.Sprintf("s3://%s/%s", s3Bucket, s3Path)
+		// s3://cla-signature-files-prod/contract-group/6c6a70a6-6a54-49eb-8550-6d47e3f902b9/ccla/f0f7536a-f220-451d-a15a-b6bc90e3cdc6/74936cb6-721e-4d01-bf89-347407a9f15c.pdf
+		data, err := downloadS3PDF(s3c, s3Bucket, s3Path)
+		// data, err := downloadS3PDF(s3c, s3Bucket, "contract-group/6c6a70a6-6a54-49eb-8550-6d47e3f902b9/ccla/f0f7536a-f220-451d-a15a-b6bc90e3cdc6/74936cb6-721e-4d01-bf89-347407a9f15c.pdf")
+		if err != nil {
+			fmt.Printf("warning: failed to download PDF from S3 path: '%s': %+v\n", s3FullPath, err)
+			continue
+		}
+		if dbg {
+			os.WriteFile(signatureID+".pdf", data, 0644)
+		}
+		addr, err := extractAddressFromPDF(data)
+		if err != nil {
+			fmt.Printf("warning: cannot extract address from PDF '%s': %+v\n", s3FullPath, err)
+		}
 		existingAddr, exists := companiesMap[finalCompany]
 		if exists {
 			if addr == existingAddr {
@@ -358,11 +412,11 @@ func main() {
 				fmt.Printf("warning: company '%s' already exists and the new address is different '%s' than previous '%s', merging both\n", finalCompany, addr, existingAddr)
 			}
 			companiesMap[finalCompany] = mergeAddr(existingAddr, addr, ";;;")
-			dataMap[finalCompany] = s3Path
+			dataMap[finalCompany] = s3FullPath
 			continue
 		}
 		companiesMap[finalCompany] = addr
-		dataMap[finalCompany] = s3Path
+		dataMap[finalCompany] = s3FullPath
 	}
 
 	// Generate the final results
