@@ -1,7 +1,6 @@
 SELECT DISTINCT
   COALESCE(c.data:company_name, s.data:signature_reference_name, '') AS company,
-  s.signature_id,
-  s.data:user_docusign_raw_xml AS doc
+  s.signature_id
 FROM
   {{.Signatures}} s
 LEFT JOIN
@@ -12,6 +11,4 @@ WHERE
   s.data:signature_type = 'ccla'
   AND s.data:signature_signed
   AND s.data:signature_approved
-  AND s.data:user_docusign_raw_xml IS NOT NULL
-  AND LOWER(COALESCE(s.data:note, '')) NOT LIKE 'manually added%'
   AND s.data:date_created >= ?

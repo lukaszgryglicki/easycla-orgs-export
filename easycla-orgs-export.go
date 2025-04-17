@@ -359,10 +359,10 @@ func main() {
 	companiesMap := make(map[string]string)
 	dataMap := make(map[string]string)
 	for rows.Next() {
-		var company string
+		var company, signatureID string
 		var doc string
 
-		if err := rows.Scan(&company, &doc); err != nil {
+		if err := rows.Scan(&company, &signatureID, &doc); err != nil {
 			panic(err)
 		}
 
@@ -376,11 +376,14 @@ func main() {
 			finalCompany = strings.TrimSpace(xmlCompany)
 		}
 		if finalCompany == "" {
-			fmt.Printf("warning: cannot get company for row: company%s, xmlCompany=%s, addr1=%s, addr2=%s, addr3=%s, xml: '%s'\n", company, xmlCompany, addr1, addr2, addr3, doc)
+			fmt.Printf("warning: cannot get company for row: company=%s, xmlCompany=%s, addr1=%s, addr2=%s, addr3=%s, xml: '%s'\n", company, xmlCompany, addr1, addr2, addr3, doc)
 			continue
 		}
 		addr := mergeAddr(addr1, addr2, ", ")
 		addr = mergeAddr(addr, addr3, ", ")
+		if addr == "" {
+			addr = signatureID
+		}
 		existingAddr, exists := companiesMap[finalCompany]
 		if exists {
 			if addr == existingAddr {
@@ -432,7 +435,7 @@ func main() {
 		companyID = strings.ReplaceAll(companyID, `"`, "")
 		finalCompany := strings.TrimSpace(company)
 		if finalCompany == "" {
-			fmt.Printf("warning: cannot get company for row: company%s, signature_id=%s, project_id=%s, company_id=%s\n", company, signatureID, projectID, companyID)
+			fmt.Printf("warning: cannot get company for row: company=%s, signature_id=%s, project_id=%s, company_id=%s\n", company, signatureID, projectID, companyID)
 			continue
 		}
 		s3Path := fmt.Sprintf("contract-group/%s/ccla/%s/%s.pdf", projectID, companyID, signatureID)
@@ -472,6 +475,63 @@ func main() {
 		}
 		companiesMap[finalCompany] = addr
 		dataMap[finalCompany] = s3FullPath
+	}
+
+	// Get remaining companies (without filtering for XML or S# PDF) - only names will be generated.
+	// Put signature IDS as their address, so they can be checked manually later
+	query, err = loadQuery("query-others.sql", TemplateData{
+		Signatures: signatures,
+		Companies:  companies,
+	})
+	if err != nil {
+		panic(fmt.Errorf("failed to load query-others.sql: %w", err))
+	}
+	if dbg {
+		fmt.Printf("Query:\n---\n%s\n---\n", query)
+	}
+
+	rows, err = db.QueryContext(ctx, query, startDate)
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+
+	otherCompaniesMap := make(map[string]string)
+	for rows.Next() {
+		var company string
+		var signatureID string
+
+		if err := rows.Scan(&company, &signatureID); err != nil {
+			panic(err)
+		}
+
+		finalCompany := strings.TrimSpace(company)
+		if finalCompany == "" {
+			continue
+		}
+		addr := signatureID
+		existingAddr, exists := otherCompaniesMap[finalCompany]
+		if exists {
+			if addr == existingAddr {
+				if dbg {
+					fmt.Printf("warning: company '%s' already exists and has the same address\n", finalCompany)
+				}
+				continue
+			}
+			if dbg {
+				fmt.Printf("warning: company '%s' already exists and the new address is different '%s' than previous '%s', merging both\n", finalCompany, addr, existingAddr)
+			}
+			otherCompaniesMap[finalCompany] = mergeAddr(existingAddr, addr, ";;;")
+			continue
+		}
+		otherCompaniesMap[finalCompany] = addr
+	}
+
+	for company, signatures := range otherCompaniesMap {
+		_, exists := companiesMap[company]
+		if !exists {
+			companiesMap[company] = signatures
+		}
 	}
 
 	// Generate the final results
