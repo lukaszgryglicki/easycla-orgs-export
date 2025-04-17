@@ -477,7 +477,7 @@ func main() {
 		dataMap[finalCompany] = s3FullPath
 	}
 
-	// Get remaining companies (without filtering for XML or S# PDF) - only names will be generated.
+	// Get remaining companies (without filtering for XML or S3 PDF) - only names will be generated.
 	// Put signature IDS as their address, so they can be checked manually later
 	query, err = loadQuery("query-others.sql", TemplateData{
 		Signatures: signatures,
