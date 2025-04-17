@@ -242,12 +242,13 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	query, err := loadQuery("query.sql", TemplateData{
+	// Get normal cases from saved XMLs
+	query, err := loadQuery("query-automatic.sql", TemplateData{
 		Signatures: signatures,
 		Companies:  companies,
 	})
 	if err != nil {
-		panic(fmt.Errorf("failed to load query.sql: %w", err))
+		panic(fmt.Errorf("failed to load query-automatic.sql: %w", err))
 	}
 	if dbg {
 		fmt.Printf("Query:\n---\n%s\n---\n", query)
@@ -310,6 +311,60 @@ func main() {
 		companiesMap[finalCompany] = addr
 		dataMap[finalCompany] = doc
 	}
+
+	// Get special (manual) cases from S3
+	query, err = loadQuery("query-manual.sql", TemplateData{
+		Signatures: signatures,
+		Companies:  companies,
+	})
+	if err != nil {
+		panic(fmt.Errorf("failed to load query-manual.sql: %w", err))
+	}
+	if dbg {
+		fmt.Printf("Query:\n---\n%s\n---\n", query)
+	}
+
+	rows, err = db.QueryContext(ctx, query, startDate)
+	if err != nil {
+		panic(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var company string
+		var doc string
+
+		if err := rows.Scan(&company, &doc); err != nil {
+			panic(err)
+		}
+
+		fmt.Printf("row: company%s, data=%s\n", company, doc)
+		finalCompany := strings.TrimSpace(company)
+		if finalCompany == "" {
+			fmt.Printf("warning: cannot get company for row: company%s, data: '%s'\n", company, doc)
+			continue
+		}
+		// XXX:
+		addr := "xyz"
+		existingAddr, exists := companiesMap[finalCompany]
+		if exists {
+			if addr == existingAddr {
+				if dbg {
+					fmt.Printf("warning: company '%s' already exists and has the same address\n", finalCompany)
+				}
+				continue
+			}
+			if dbg {
+				fmt.Printf("warning: company '%s' already exists and the new address is different '%s' than previous '%s', merging both\n", finalCompany, addr, existingAddr)
+			}
+			companiesMap[finalCompany] = mergeAddr(existingAddr, addr, ";;;")
+			dataMap[finalCompany] = doc
+			continue
+		}
+		companiesMap[finalCompany] = addr
+		dataMap[finalCompany] = doc
+	}
+
+	// Generate the final results
 	companiesList := make([]string, 0, len(companiesMap))
 	for company := range companiesMap {
 		companiesList = append(companiesList, company)
