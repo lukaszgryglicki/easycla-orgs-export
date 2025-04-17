@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rsa"
@@ -13,6 +14,8 @@ import (
 	"html"
 	"io"
 	"os"
+	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"text/template"
@@ -196,8 +199,51 @@ func downloadS3PDF(s3Client *s3.Client, bucket, key string) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func extractTextLinesFromPDF(pdfBytes []byte) ([]string, error) {
+	cmd := exec.Command("pdftotext", "-layout", "-", "-")
+	cmd.Stdin = bytes.NewReader(pdfBytes)
+
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		return nil, fmt.Errorf("pdftotext failed: %v: %s", err, stderr.String())
+	}
+
+	var lines []string
+	scanner := bufio.NewScanner(&out)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading output lines failed: %v", err)
+	}
+
+	return lines, nil
+}
+
+var addressRegexp = regexp.MustCompile(`(?i)\d{1,5}\s+[\w\s.,'-]+(?:\n|,)?\s*\w{2,}\s+\d{4,6}`)
+var addressHinted = regexp.MustCompile(`(?i)(?:address[:\s]*)?\s*(\d{1,5}\s+[\w\s.,'-]+(?:\n|,)?\s*\w{2,}\s+\d{4,6})`)
+
 func extractAddressFromPDF(data []byte) (string, error) {
-	// XXX
+	lines, err := extractTextLinesFromPDF(data)
+	if err != nil {
+		return "", err
+	}
+	for i, line := range lines {
+		if addressRegexp.MatchString(line) {
+			return line, nil
+		}
+		if i > 0 && strings.Contains(strings.ToLower(lines[i-1]), "address") {
+			if m := addressHinted.FindStringSubmatch(line); len(m) > 1 {
+				return m[1], nil
+			}
+		}
+	}
 	return fmt.Sprintf("address %d", len(data)), nil
 }
 
@@ -398,7 +444,12 @@ func main() {
 		}
 		addr, err := extractAddressFromPDF(data)
 		if err != nil {
-			fmt.Printf("warning: cannot extract address from PDF '%s': %+v\n", s3FullPath, err)
+			if dbg {
+				fmt.Printf("warning: cannot extract address from PDF '%s': %+v\n", s3FullPath, err)
+			}
+			addr = s3FullPath
+		} else {
+			addr += ";;;" + s3FullPath
 		}
 		existingAddr, exists := companiesMap[finalCompany]
 		if exists {
