@@ -1,17 +1,17 @@
-select
-  coalesce(c.data:company_name, s.data:signature_reference_name) as company,
-  s.data:user_docusign_raw_xml as doc
-from
+SELECT DISTINCT
+  COALESCE(c.data:company_name, s.data:signature_reference_name) AS company,
+  s.data:user_docusign_raw_xml AS doc
+FROM
   {{signatures}} s
-left join
+LEFT JOIN
   {{companies}} c
-on
+ON
   s.data:signature_reference_id = c.company_id
-where
+WHERE
   s.data:signature_type = 'ccla'
-  and s.data:signature_signed
-  and s.data:signature_approved
-  and s.data:user_docusign_raw_xml is not null
-  and lower(coalesce(s.data:note, '')) not like 'manually added%'
-  and s.data:date_created > 'YYYY-MM-DD'
+  AND s.data:signature_signed
+  AND s.data:signature_approved
+  AND s.data:user_docusign_raw_xml IS NOT NULL
+  AND LOWER(COALESCE(s.data:note, '')) NOT LIKE 'manually added%'
+  AND s.data:date_created > 'YYYY-MM-DD'
 ;
