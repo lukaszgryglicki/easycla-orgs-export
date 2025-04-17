@@ -312,7 +312,7 @@ func main() {
 		dataMap[finalCompany] = doc
 	}
 
-	// Get special (manual) cases from S3
+	// Get special (manual) cases from S3: s3://cla-signature-files-<stage>/contract-group/<projectid>/ccla/<companyid>/<signatureid>.pdf
 	query, err = loadQuery("query-manual.sql", TemplateData{
 		Signatures: signatures,
 		Companies:  companies,
@@ -331,18 +331,19 @@ func main() {
 	defer rows.Close()
 	for rows.Next() {
 		var company string
-		var doc string
+		var signatureID, projectID, companyID string
 
-		if err := rows.Scan(&company, &doc); err != nil {
+		if err := rows.Scan(&company, &signatureID, &projectID, &companyID); err != nil {
 			panic(err)
 		}
 
-		fmt.Printf("row: company%s, data=%s\n", company, doc)
+		fmt.Printf("row: company%s, signature_id=%s, project_id=%s, company_id=%s\n", company, signatureID, projectID, companyID)
 		finalCompany := strings.TrimSpace(company)
 		if finalCompany == "" {
-			fmt.Printf("warning: cannot get company for row: company%s, data: '%s'\n", company, doc)
+			fmt.Printf("warning: cannot get company for row: company%s, signature_id=%s, project_id=%s, company_id=%s\n", company, signatureID, projectID, companyID)
 			continue
 		}
+		s3Path := fmt.Sprintf("s3://cla-signature-files-%s/contract-group/%s/ccla/%s/%s.pdf", stage, projectID, companyID, signatureID)
 		// XXX:
 		addr := "xyz"
 		existingAddr, exists := companiesMap[finalCompany]
@@ -357,11 +358,11 @@ func main() {
 				fmt.Printf("warning: company '%s' already exists and the new address is different '%s' than previous '%s', merging both\n", finalCompany, addr, existingAddr)
 			}
 			companiesMap[finalCompany] = mergeAddr(existingAddr, addr, ";;;")
-			dataMap[finalCompany] = doc
+			dataMap[finalCompany] = s3Path
 			continue
 		}
 		companiesMap[finalCompany] = addr
-		dataMap[finalCompany] = doc
+		dataMap[finalCompany] = s3Path
 	}
 
 	// Generate the final results
