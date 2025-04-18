@@ -123,7 +123,7 @@ func parseXML(xmlStr string, parseEmbedded, dbg bool) (string, string, string, s
 					fmt.Printf("warning: error parsing embedded XML: '%s'\n", sData)
 				} else {
 					if dbg {
-						fmt.Printf("found embedded data: '%s', '%s', '%s', '%s' --> '%s', '%s', '%s', '%s'\n", cName, ad1, ad2, ad3, eCompany, eAddr1, eAddr2, eAddr2)
+						fmt.Printf("found embedded data: '%s', '%s', '%s', '%s' --> '%s', '%s', '%s', '%s'\n", cName, ad1, ad2, ad3, eCompany, eAddr1, eAddr2, eAddr3)
 					}
 					if cName == "" && eCompany != "" {
 						cName = eCompany
