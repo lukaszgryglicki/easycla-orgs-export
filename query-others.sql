@@ -12,3 +12,4 @@ WHERE
   AND s.data:signature_signed
   AND s.data:signature_approved
   AND s.data:date_created >= ?
+  AND s.data:date_created <= ?

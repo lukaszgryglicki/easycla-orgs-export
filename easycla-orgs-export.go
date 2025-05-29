@@ -263,6 +263,13 @@ func main() {
 		startDate = "2000-01-01"
 	}
 	fmt.Printf("Start date: %s\n", startDate)
+	var endDate string
+	if len(os.Args) > 2 {
+		endDate = os.Args[2]
+	} else {
+		endDate = time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	}
+	fmt.Printf("End date: %s\n", endDate)
 	dbg := os.Getenv("DEBUG") != ""
 	stage := os.Getenv("STAGE")
 	if stage == "" {
@@ -343,13 +350,13 @@ func main() {
 		fmt.Printf("Query:\n---\n%s\n---\n", query)
 	}
 
-	rows, err := db.QueryContext(ctx, query, startDate)
+	rows, err := db.QueryContext(ctx, query, startDate, endDate)
 	if err != nil {
 		panic(err)
 	}
 	defer rows.Close()
 
-	fn := fmt.Sprintf("export_%s_%s_from_%s.csv", stage, time.Now().Format("2006-01-02"), startDate)
+	fn := fmt.Sprintf("export_%s_%s-%s.csv", stage, startDate, endDate)
 	f, _ := os.Create(fn)
 	w := csv.NewWriter(f)
 	defer f.Close()
@@ -415,7 +422,7 @@ func main() {
 		fmt.Printf("Query:\n---\n%s\n---\n", query)
 	}
 
-	rows, err = db.QueryContext(ctx, query, startDate)
+	rows, err = db.QueryContext(ctx, query, startDate, endDate)
 	if err != nil {
 		panic(err)
 	}
@@ -490,7 +497,7 @@ func main() {
 		fmt.Printf("Query:\n---\n%s\n---\n", query)
 	}
 
-	rows, err = db.QueryContext(ctx, query, startDate)
+	rows, err = db.QueryContext(ctx, query, startDate, endDate)
 	if err != nil {
 		panic(err)
 	}

@@ -15,3 +15,4 @@ WHERE
   AND s.data:signature_approved
   AND LOWER(COALESCE(s.data:note, '')) LIKE 'manually added%'
   AND s.data:date_created >= ?
+  AND s.data:date_created <= ?

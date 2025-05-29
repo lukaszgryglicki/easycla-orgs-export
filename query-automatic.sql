@@ -15,3 +15,4 @@ WHERE
   AND s.data:user_docusign_raw_xml IS NOT NULL
   AND LOWER(COALESCE(s.data:note, '')) NOT LIKE 'manually added%'
   AND s.data:date_created >= ?
+  AND s.data:date_created <= ?
