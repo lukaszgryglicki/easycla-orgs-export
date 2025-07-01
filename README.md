@@ -7,11 +7,11 @@ Tool for exporing orgs from EasyCLA based on CCLA signatures
 [MFA=1] [DEBUG=1] [STAGE=prod|dev] . ./setenv.sh.secret
 ```
 
-Example: `` MFA=1 DEBUG=1 STAGE=prod . ./setenv.sh.secret ``.
+Example: `` MFA=1 DEBUG=1 STAGE=prod . ./setenv.sh.secret ``, or just `` . ./setenv.sh.secret ``.
 
 
 # Run export
 
 - For all time: `` ./easycla-orgs-export ``.
 - Until given date: `` ./easycla-orgs-export 2025-04-17 ``.
-- For date date: `` ./easycla-orgs-export 2025-05-01 2025-06-01 ``.
+- For date date: `` [DEBUG=1] ./easycla-orgs-export 2025-05-01 2025-06-01 ``.

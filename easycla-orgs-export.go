@@ -448,6 +448,9 @@ func main() {
 		s3Path := fmt.Sprintf("contract-group/%s/ccla/%s/%s.pdf", projectID, companyID, signatureID)
 		s3FullPath := fmt.Sprintf("s3://%s/%s", s3Bucket, s3Path)
 		// s3://cla-signature-files-prod/contract-group/6c6a70a6-6a54-49eb-8550-6d47e3f902b9/ccla/f0f7536a-f220-451d-a15a-b6bc90e3cdc6/74936cb6-721e-4d01-bf89-347407a9f15c.pdf
+		if dbg {
+			fmt.Printf("info: downloading PDF: %s/%s\n", s3Bucket, s3Path)
+		}
 		data, err := downloadS3PDF(s3c, s3Bucket, s3Path)
 		if err != nil {
 			fmt.Printf("warning: failed to download PDF from S3 path: '%s': %+v\n", s3FullPath, err)

@@ -46,3 +46,4 @@ coverage.*
 *.csv
 /easycla-orgs-export
 out
+*.pdf
